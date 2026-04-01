@@ -178,19 +178,50 @@ async function animateTextbox(box, canvasCtx, displayAfterTyping = 1000){
 
 //Generate Video from Cache
 async function generateCachedVideo(){
-  if(cachedBoxes.length===0){ alert('No cached boxes!'); return; }
+  if(cachedBoxes.length===0){
+    alert('No cached boxes!');
+    return;
+  }
+
   await loadFonts();
-  const pauseBetween=parseInt(document.getElementById("pauseBetween").value);
+
+  const pauseBetween = parseInt(document.getElementById("pauseBetween").value);
+
   const stream = canvas.captureStream(30);
-  let chunks=[];
-  const mr = new MediaRecorder(stream,{mimeType:'video/webm; codecs=vp9'});
-  mr.ondataavailable=e=>{ if(e.data.size>0) chunks.push(e.data); };
-  mr.onstop=()=>{
+  let chunks = [];
+
+  const mr = new MediaRecorder(stream, {
+    mimeType: 'video/webm; codecs=vp9'
+  });
+
+  mr.ondataavailable = e=>{
+    if(e.data.size>0) chunks.push(e.data);
+  };
+
+  mr.onstop = ()=>{
     const blob = new Blob(chunks,{type:'video/webm'});
     const url = URL.createObjectURL(blob);
-    document.getElementById("preview").src=url;
-    const a=document.createElement('a'); a.href=url; a.download='undertale_sequence.webm'; a.click();
+
+    document.getElementById("preview").src = url;
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'undertale_sequence.webm';
+    a.click();
   };
+
+  mr.start();
+
+  // PLAY ALL BOXES SEQUENTIALLY
+  for(let box of cachedBoxes){
+    await animateTextbox(box, ctx, 1000);
+    await new Promise(r=>setTimeout(r, pauseBetween));
+  }
+
+  // STOP AFTER EVERYTHING IS DONE
+  await new Promise(r=>setTimeout(r, 500));
+  mr.stop();
+}
   mr.start();
 
   for(let box of cachedBoxes){
