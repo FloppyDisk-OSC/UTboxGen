@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Undertale Textbox Generator</title>
+<style>
+body { background:#00ff00; color:white; text-align:center; font-family:sans-serif; }
+canvas, video { border:2px solid white; margin-top:10px; }
+textarea, input, select, button { margin:5px; padding:5px; }
+#tagKey, #cacheViewer { text-align:left; margin:10px auto; width:600px; background:#111; padding:10px; border:1px solid white; }
+.cacheItem { display:flex; justify-content:space-between; margin-bottom:5px; border-bottom:1px solid #555; padding-bottom:2px; }
+</style>
+</head>
+<body>
+<h1>Undertale Textbox Generator</h1>
+
+<textarea id="text" rows="4" cols="50" placeholder="Use backtick tags: `Y` `W` `R` `N` `v` `\v` `s` `\s` `p500` `c#a1b2c3`"></textarea><br>
+Portrait: <input type="file" id="portrait" accept="image/*"><br>
+Font:
+<select id="font">
+<option value="comic">Pixel Comic Sans</option>
+<option value="mono">Determination Mono</option>
+<option value="sans">Determination Sans</option>
+<option value="papyrus">Pixel Papyrus</option>
+</select><br>
+Text Size: <input type="number" id="textSize" value="20"><br>
+Text Speed (ms/letter): <input type="number" id="textSpeed" value="50"><br>
+Background: <input type="color" id="bgColor" value="#00ff00"><br>
+Pause Between Boxes (ms): <input type="number" id="pauseBetween" value="500"><br>
+<button onclick="cacheTextbox()">Cache Textbox</button>
+<button onclick="generateCachedVideo()">Generate Video from Cache</button>
+
+<div id="tagKey">
+<h3>Tag Key</h3>
+<ul>
+<li>`Y` = Yellow text</li>
+<li>`W` = White text</li>
+<li>`R` = Red text</li>
+<li>`N` = Newline</li>
+<li>`p[number]` = Pause for [number] ms</li>
+<li>`c#[hex]` = Custom color</li>
+<li>`v` / `\v` = Start / Stop wave animation</li>
+<li>`s` / `\s` = Start / Stop shake animation</li>
+</ul>
+</div>
+
+<div id="cacheViewer">
+<h3>Cached Boxes</h3>
+<div id="cacheList"></div>
+</div>
+
+<canvas id="canvas" width="600" height="150"></canvas>
+<video id="preview" controls></video>
+
+<script>
+// stuff
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const cachedBoxes = [];
+
+// fonts
+const fonts = {
+  comic: new FontFace('comic', "url('http://floppydisk-osc.github.io/random-assets/comicSans.otf')"),
+  mono: new FontFace('mono', "url('http://floppydisk-osc.github.io/random-assets/DeterminationMonoWebRegular[1].ttf')"),
+  sans: new FontFace('sans', "url('http://floppydisk-osc.github.io/random-assets/DeterminationSansWebRegular[1].ttf')"),
+  papyrus: new FontFace('papyrus', "url('http://floppydisk-osc.github.io/random-assets/papyrus-pixel-mono[1].otf')")
+};
+async function loadFonts(){
+  const promises = [];
+  for(let k in fonts){ promises.push(fonts[k].load().then(f=>document.fonts.add(f))); }
+  await Promise.all(promises);
+}
+
+//cache view
+function updateCacheViewer(){
+  const listDiv = document.getElementById("cacheList");
+  listDiv.innerHTML='';
+  cachedBoxes.forEach((box,i)=>{
+    const div = document.createElement('div');
+    div.className='cacheItem';
+    div.innerHTML=`<span>${box.text.slice(0,50)}${box.text.length>50?'...':''}</span><button onclick="deleteCache(${i})">Delete</button>`;
+    listDiv.appendChild(div);
+  });
+}
+function deleteCache(i){ cachedBoxes.splice(i,1); updateCacheViewer(); }
+
+//parse
+function parseText(text,startX,textSize){
+  let letters=[], x=startX, y=40, lineStart=startX, color='white', wave=false, shake=false, i=0;
+  while(i<text.length){
+    if(text[i]=='`'){
+      i++; let tag=''; while(i<text.length && text[i]!='`'){ tag+=text[i]; i++; }
+      if(tag=='Y') color='yellow';
+      else if(tag=='W') color='white';
+      else if(tag=='R') color='red';
+      else if(tag=='N'){ x=lineStart; y+=textSize+5; }
+      else if(tag=='v') wave=true;
+      else if(tag=='\\v') wave=false;
+      else if(tag=='s') shake=true;
+      else if(tag=='\\s') shake=false;
+      else if(tag.startsWith('p')) letters.push({pause:parseInt(tag.slice(1))});
+      else if(tag.startsWith('c')) color=tag.slice(1);
+    } else {
+      letters.push({char:text[i],x,y,color,wave,shake});
+      x+=textSize/1.5;
+      if(x>canvas.width-20){ x=lineStart; y+=textSize+5; }
+    }
+    i++;
+  }
+  return letters;
+}
+
+//cache
+async function cacheTextbox(){
+  await loadFonts();
+  const text = document.getElementById("text").value;
+  const portraitFile = document.querySelector('#portrait').files[0];
+  const font = document.getElementById("font").value;
+  const textSize = parseInt(document.getElementById("textSize").value);
+  const textSpeed = parseInt(document.getElementById("textSpeed").value);
+  const bg = document.getElementById("bgColor").value;
+
+  const box = {text, letters:[], portrait:null, font, textSize, textSpeed, bg};
+  const drawBox = ()=>{
+    box.letters = parseText(text, portraitFile?90:20, textSize);
+    cachedBoxes.push(box);
+    updateCacheViewer();
+    alert('Textbox cached!');
+  };
+  if(portraitFile){
+    const img = new Image();
+    img.src = URL.createObjectURL(portraitFile);
+    img.onload=()=>{ box.portrait=img; drawBox(); }
+  } else drawBox();
+}
+
+//animate
+async function animateTextbox(box, canvasCtx, displayAfterTyping = 1000){
+  return new Promise(resolve=>{
+    let index = 0;
+    const startTime = performance.now();
+    canvasCtx.font = `${box.textSize}px ${box.font}`;
+
+    // Continuous animation loop
+    function drawFrame(){
+      canvasCtx.fillStyle = box.bg; canvasCtx.fillRect(0,0,canvas.width,canvas.height);
+      canvasCtx.strokeStyle='white'; canvasCtx.strokeRect(5,5,canvas.width-10,canvas.height-10);
+      if(box.portrait) canvasCtx.drawImage(box.portrait,15,30,64,64);
+      const t = (performance.now()-startTime)/1000;
+
+      for(let j=0;j<box.letters.length;j++){
+        const l = box.letters[j];
+        if(l.char && j<=index){
+          let dx=0, dy=0;
+          if(l.wave) dy=Math.sin(t*10+j*0.5)*5;
+          if(l.shake) dx=Math.sin(t*50+j*1)*2;
+          canvasCtx.fillStyle = l.color;
+          canvasCtx.fillText(l.char,l.x+dx,l.y+dy);
+        }
+      }
+      requestAnimationFrame(drawFrame);
+    }
+    drawFrame();
+
+    // Typing loop (awaits pause)
+    (async ()=>{
+      while(index < box.letters.length){
+        const l = box.letters[index];
+        if(l.pause) await new Promise(r=>setTimeout(r,l.pause));
+        else await new Promise(r=>setTimeout(r,box.textSpeed));
+        index++;
+      }
+      await new Promise(r=>setTimeout(r,displayAfterTyping));
+      resolve();
+    })();
+  });
+}
+
+//Generate Video from Cache
+async function generateCachedVideo(){
+  if(cachedBoxes.length===0){ alert('No cached boxes!'); return; }
+  await loadFonts();
+  const pauseBetween=parseInt(document.getElementById("pauseBetween").value);
+  const stream = canvas.captureStream(30);
+  let chunks=[];
+  const mr = new MediaRecorder(stream,{mimeType:'video/webm; codecs=vp9'});
+  mr.ondataavailable=e=>{ if(e.data.size>0) chunks.push(e.data); };
+  mr.onstop=()=>{
+    const blob = new Blob(chunks,{type:'video/webm'});
+    const url = URL.createObjectURL(blob);
+    document.getElementById("preview").src=url;
+    const a=document.createElement('a'); a.href=url; a.download='undertale_sequence.webm'; a.click();
+  };
+  mr.start();
+
+  for(let box of cachedBoxes){
+    await animateTextbox(box,ctx,1000);
+    await new Promise(r=>setTimeout(r,pauseBetween));
+  }
+
+  setTimeout(()=>mr.stop(),500);
+}
+</script>
+</body>
+</html>
